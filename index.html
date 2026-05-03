@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; font-family: sans-serif; }
+canvas { display:block; cursor:grab; }
+#ui { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:10px; }
+button { background:#111; color:#aaa; border:0.5px solid #333; border-radius:8px; padding:5px 16px; font-size:16px; cursor:pointer; }
+#zoomLabel { color:#555; font-size:12px; min-width:46px; text-align:center; }
+#modeLabel { position:absolute; top:10px; left:50%; transform:translateX(-50%); color:#555; font-size:12px; pointer-events:none; letter-spacing:0.05em; }
+#backBtn { position:absolute; top:10px; left:14px; display:none; background:#111; color:#aaa; border:0.5px solid #333; border-radius:8px; padding:5px 13px; font-size:12px; cursor:pointer; }
+#tooltip { position:absolute; pointer-events:none; background:rgba(0,0,0,0.75); color:#ccc; border:0.5px solid #333; border-radius:6px; padding:4px 10px; font-size:12px; display:none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="modeLabel">MILKY WAY — click the Sun to explore the Solar System</div>
+<button id="backBtn">← Galaxy</button>
+<div id="ui">
+  <button id="zo">−</button>
+  <span id="zoomLabel">100%</span>
+  <button id="zi">+</button>
+  <button id="rb">Reset</button>
+</div>
+<div id="tooltip"></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+window.addEventListener('resize', () => { canvas.width=window.innerWidth; canvas.height=window.innerHeight; if(mode==='galaxy') init(); });
+
+let zoom=1, panX=0, panY=0, dragging=false, lastMX=0, lastMY=0, lastPinch=null;
+let mode = 'galaxy'; // 'galaxy' or 'solar'
+let transitioning = false, transProgress = 0;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+function randNorm(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+
+const gStars=[], gHaze=[];
+const ARMS=[
+  {offset:0, h:215},{offset:Math.PI*0.5, h:225},
+  {offset:Math.PI, h:210},{offset:Math.PI*1.5, h:230}
+];
+
+let sunGX, sunGY;
+
+function init(){
+  gStars.length=0; gHaze.length=0;
+  const cx=canvas.width/2, cy=canvas.height/2;
+  const scale=Math.min(canvas.width,canvas.height)*0.44;
+  const sunT=0.55, sunAngle=ARMS[0].offset + sunT*3.8;
+  sunGX = cx + Math.cos(sunAngle)*Math.pow(sunT,0.72)*scale;
+  sunGY = cy + Math.sin(sunAngle)*Math.pow(sunT,0.72)*scale*0.42;
+
+  for(let i=0;i<280;i++){
+    const arm=ARMS[Math.floor(Math.random()*4)];
+    const t=rand(0.08,1.1), angle=arm.offset+t*3.8+rand(-0.3,0.3);
+    const r=Math.pow(t,0.7)*scale, spread=r*rand(0.04,0.14);
+    const x=cx+Math.cos(angle)*r+randNorm()*spread;
+    const y=cy+Math.sin(angle)*r*0.42+randNorm()*spread*0.42;
+    gHaze.push({x,y,r:rand(18,55)*Math.pow(t,0.3),alpha:rand(0.013,0.05),h:arm.h});
+  }
+  for(let a=0;a<4;a++){
+    const arm=ARMS[a];
+    for(let i=0;i<700;i++){
+      const t=rand(0.04,1.15), angle=arm.offset+t*3.8+randNorm()*0.1;
+      const r=Math.pow(t,0.72)*scale, spread=r*rand(0.012,0.08);
+      const x=cx+Math.cos(angle)*r+randNorm()*spread;
+      const y=cy+Math.sin(angle)*r*0.42+randNorm()*spread*0.42;
+      const dist=Math.hypot(x-cx,(y-cy)/0.42);
+      const warmth=Math.max(0,1-dist/scale);
+      const hue=warmth>0.5?rand(20,50):(a%2===0?rand(200,230):rand(215,245));
+      gStars.push({x,y,r:rand(0.25,1.4)*rand(0.3,1),hue,sat:warmth>0.5?rand(40,70):rand(10,40),brightness:rand(0.3,1),
+        twinkle:rand(0,Math.PI*2),twinkleSpeed:rand(0.015,0.055),
+        orbitAngle:Math.atan2((y-cy)/0.42,x-cx),orbitR:dist,
+        orbitSpeed:0.00002+0.00004/(t+0.1),cx,cy});
+    }
+  }
+  for(let i=0;i<500;i++){
+    const angle=rand(0,Math.PI*2),r=Math.abs(randNorm())*scale*0.13;
+    const x=cx+Math.cos(angle)*r, y=cy+Math.sin(angle)*r*0.42;
+    const dist=Math.hypot(x-cx,(y-cy)/0.42);
+    gStars.push({x,y,r:rand(0.2,1.1),hue:rand(20,55),sat:rand(30,60),brightness:rand(0.5,1),
+      twinkle:rand(0,Math.PI*2),twinkleSpeed:rand(0.02,0.06),
+      orbitAngle:Math.atan2((y-cy)/0.42,x-cx),orbitR:dist,orbitSpeed:0.00015+0.0001*Math.random(),cx,cy});
+  }
+  for(let i=0;i<350;i++){
+    const angle=rand(0,Math.PI*2),r=rand(0,scale*1.1);
+    const x=cx+Math.cos(angle)*r, y=cy+Math.sin(angle)*r*0.42;
+    gStars.push({x,y,r:rand(0.15,0.65),hue:rand(200,240),sat:rand(5,20),brightness:rand(0.1,0.45),
+      twinkle:rand(0,Math.PI*2),twinkleSpeed:rand(0.01,0.04),
+      orbitAngle:Math.atan2((y-cy)/0.42,x-cx),orbitR:Math.hypot(x-cx,(y-cy)/0.42),orbitSpeed:0.000012,cx,cy});
+  }
+}
+init();
+
+const PLANETS = [
+  {name:'Mercury', color:'#b5b5b5', r:4,  orbit:70,  speed:0.040, angle:rand(0,6.28), tilt:0},
+  {name:'Venus',   color:'#e8c97a', r:7,  orbit:110, speed:0.031, angle:rand(0,6.28), tilt:0},
+  {name:'Earth',   color:'#4fa3e0', r:7.5,orbit:158, speed:0.024, angle:rand(0,6.28), tilt:0, moon:true},
+  {name:'Mars',    color:'#c1440e', r:5,  orbit:210, speed:0.019, angle:rand(0,6.28), tilt:0},
+  {name:'Jupiter', color:'#c88b3a', r:20, orbit:295, speed:0.009, angle:rand(0,6.28), tilt:0, bands:true},
+  {name:'Saturn',  color:'#e4d191', r:16, orbit:385, speed:0.006, angle:rand(0,6.28), tilt:0, rings:true},
+  {name:'Uranus',  color:'#7de8e8', r:11, orbit:465, speed:0.004, angle:rand(0,6.28), tilt:0},
+  {name:'Neptune', color:'#3f54ba', r:10, orbit:530, speed:0.003, angle:rand(0,6.28), tilt:0},
+];
+const MOON = { r:2.5, orbit:14, speed:0.12, angle:0 };
+let bgStars = [];
+function initBgStars(){
+  bgStars=[];
+  for(let i=0;i<500;i++) bgStars.push({x:rand(0,canvas.width),y:rand(0,canvas.height),r:rand(0.2,1.1),alpha:rand(0.2,0.9)});
+}
+initBgStars();
+
+const tooltip = document.getElementById('tooltip');
+canvas.addEventListener('mousemove', e => {
+  if(mode!=='solar'||transitioning) return;
+  const cx=canvas.width/2, cy=canvas.height/2;
+  const mx=(e.clientX-canvas.width/2-panX)/zoom+canvas.width/2;
+  const my=(e.clientY-canvas.height/2-panY)/zoom+canvas.height/2;
+  let found=null;
+  for(const p of PLANETS){
+    const px=cx+Math.cos(p.angle)*p.orbit, py=cy+Math.sin(p.angle)*p.orbit;
+    if(Math.hypot(mx-px,my-py)<p.r+8){found=p.name;break;}
+  }
+  if(Math.hypot(mx-cx,my-cy)<18) found='Sun';
+  if(found){tooltip.style.display='block';tooltip.style.left=(e.clientX+14)+'px';tooltip.style.top=(e.clientY-10)+'px';tooltip.textContent=found;}
+  else tooltip.style.display='none';
+});
+canvas.addEventListener('mouseleave',()=>tooltip.style.display='none');
+
+canvas.addEventListener('click', e => {
+  if(mode!=='galaxy'||transitioning) return;
+  const sx=(sunGX-canvas.width/2)*zoom+canvas.width/2+panX;
+  const sy=(sunGY-canvas.height/2)*zoom+canvas.height/2+panY;
+  if(Math.hypot(e.clientX-sx, e.clientY-sy)<18){
+    enterSolar();
+  }
+});
+document.getElementById('backBtn').onclick = exitSolar;
+
+function enterSolar(){
+  transitioning=true; transProgress=0; mode='solar';
+  document.getElementById('backBtn').style.display='block';
+  document.getElementById('modeLabel').textContent='SOLAR SYSTEM — scroll/pinch to zoom, drag to pan';
+  zoom=1; panX=0; panY=0;
+  document.getElementById('zoomLabel').textContent='100%';
+}
+function exitSolar(){
+  mode='galaxy'; transitioning=false;
+  document.getElementById('backBtn').style.display='none';
+  document.getElementById('modeLabel').textContent='MILKY WAY — click the Sun to explore the Solar System';
+  zoom=1; panX=0; panY=0;
+  document.getElementById('zoomLabel').textContent='100%';
+  tooltip.style.display='none';
+}
+
+function setZoom(z,mx,my){
+  const prev=zoom; zoom=Math.max(0.2,Math.min(12,z));
+  if(mx!==undefined){
+    panX=mx-canvas.width/2-((mx-canvas.width/2-panX)/prev)*zoom;
+    panY=my-canvas.height/2-((my-canvas.height/2-panY)/prev)*zoom;
+  }
+  document.getElementById('zoomLabel').textContent=Math.round(zoom*100)+'%';
+}
+document.getElementById('zi').onclick=()=>setZoom(zoom*1.25);
+document.getElementById('zo').onclick=()=>setZoom(zoom/1.25);
+document.getElementById('rb').onclick=()=>{zoom=1;panX=0;panY=0;document.getElementById('zoomLabel').textContent='100%';};
+canvas.addEventListener('wheel',e=>{e.preventDefault();const r=canvas.getBoundingClientRect();setZoom(zoom*(e.deltaY<0?1.12:0.9),e.clientX-r.left,e.clientY-r.top);},{passive:false});
+canvas.addEventListener('touchstart',e=>{if(e.touches.length===2)lastPinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);else{dragging=true;lastMX=e.touches[0].clientX;lastMY=e.touches[0].clientY;}},{passive:true});
+canvas.addEventListener('touchmove',e=>{if(e.touches.length===2&&lastPinch){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);setZoom(zoom*d/lastPinch);lastPinch=d;}else if(dragging){panX+=e.touches[0].clientX-lastMX;panY+=e.touches[0].clientY-lastMY;lastMX=e.touches[0].clientX;lastMY=e.touches[0].clientY;}},{passive:true});
+canvas.addEventListener('touchend',()=>{dragging=false;lastPinch=null;});
+canvas.addEventListener('mousedown',e=>{dragging=true;lastMX=e.clientX;lastMY=e.clientY;canvas.style.cursor='grabbing';});
+canvas.addEventListener('mousemove',e=>{if(!dragging)return;panX+=e.clientX-lastMX;panY+=e.clientY-lastMY;lastMX=e.clientX;lastMY=e.clientY;});
+canvas.addEventListener('mouseup',()=>{dragging=false;canvas.style.cursor='grab';});
+canvas.addEventListener('mouseleave',()=>{dragging=false;});
+
+function drawGalaxy(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.save();
+  ctx.translate(canvas.width/2+panX,canvas.height/2+panY);
+  ctx.scale(zoom,zoom);
+  ctx.translate(-canvas.width/2,-canvas.height/2);
+  const cx=canvas.width/2, cy=canvas.height/2;
+  const scale=Math.min(canvas.width,canvas.height)*0.44;
+
+  const halo=ctx.createRadialGradient(cx,cy,0,cx,cy,canvas.width*0.46);
+  halo.addColorStop(0,'rgba(160,180,255,0)');
+  halo.addColorStop(0.35,'rgba(130,155,230,0.07)');
+  halo.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=halo; ctx.beginPath(); ctx.ellipse(cx,cy,canvas.width*0.46,canvas.height*0.36,0,0,Math.PI*2); ctx.fill();
+
+  for(const b of gHaze){
+    const g=ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,b.r);
+    g.addColorStop(0,`hsla(${b.h},60%,80%,${b.alpha})`);
+    g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(b.x,b.y,b.r,b.r*0.42,0,0,Math.PI*2); ctx.fill();
+  }
+
+  const bulge=ctx.createRadialGradient(cx,cy,0,cx,cy,canvas.width*0.12);
+  bulge.addColorStop(0,'rgba(255,230,150,0.36)');
+  bulge.addColorStop(0.3,'rgba(255,180,80,0.15)');
+  bulge.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=bulge; ctx.beginPath(); ctx.ellipse(cx,cy,canvas.width*0.12,canvas.height*0.09,0,0,Math.PI*2); ctx.fill();
+
+  for(const s of gStars){
+    s.orbitAngle+=s.orbitSpeed;
+    s.x=s.cx+Math.cos(s.orbitAngle)*s.orbitR;
+    s.y=s.cy+Math.sin(s.orbitAngle)*s.orbitR*0.42;
+    s.twinkle+=s.twinkleSpeed;
+    const tw=0.72+0.28*Math.sin(s.twinkle);
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r*tw,0,Math.PI*2);
+    ctx.fillStyle=`hsla(${s.hue},${s.sat}%,92%,${s.brightness*tw})`; ctx.fill();
+  }
+
+  const core=ctx.createRadialGradient(cx,cy,0,cx,cy,22);
+  core.addColorStop(0,'rgba(255,250,220,1)'); core.addColorStop(0.4,'rgba(255,200,100,0.5)'); core.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=core; ctx.beginPath(); ctx.ellipse(cx,cy,22,9,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx,cy,2,0,Math.PI*2); ctx.fillStyle='rgba(255,255,240,0.95)'; ctx.fill();
+
+  const pulse = 0.7+0.3*Math.sin(Date.now()*0.003);
+  const sg=ctx.createRadialGradient(sunGX,sunGY,0,sunGX,sunGY,10*pulse);
+  sg.addColorStop(0,'rgba(255,240,150,0.95)');
+  sg.addColorStop(0.5,'rgba(255,200,80,0.4)');
+  sg.addColorStop(1,'rgba(255,160,40,0)');
+  ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(sunGX,sunGY,10*pulse,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sunGX,sunGY,3,0,Math.PI*2); ctx.fillStyle='rgba(255,255,200,1)'; ctx.fill();
+
+  ctx.restore();
+}
+
+function drawSolar(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  for(const s of bgStars){
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+    ctx.fillStyle=`rgba(255,255,255,${s.alpha})`; ctx.fill();
+  }
+
+  ctx.save();
+  ctx.translate(canvas.width/2+panX,canvas.height/2+panY);
+  ctx.scale(zoom,zoom);
+  ctx.translate(-canvas.width/2,-canvas.height/2);
+  const cx=canvas.width/2, cy=canvas.height/2;
+
+  ctx.strokeStyle='rgba(255,255,255,0.07)'; ctx.lineWidth=0.8;
+  for(const p of PLANETS){
+    ctx.beginPath(); ctx.arc(cx,cy,p.orbit,0,Math.PI*2); ctx.stroke();
+  }
+
+  const sunR=ctx.createRadialGradient(cx,cy,0,cx,cy,40);
+  sunR.addColorStop(0,'rgba(255,255,200,1)');
+  sunR.addColorStop(0.3,'rgba(255,220,80,0.9)');
+  sunR.addColorStop(0.7,'rgba(255,140,20,0.4)');
+  sunR.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=sunR; ctx.beginPath(); ctx.arc(cx,cy,40,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx,cy,18,0,Math.PI*2); ctx.fillStyle='rgba(255,255,220,1)'; ctx.fill();
+
+  for(const p of PLANETS){
+    p.angle += p.speed * 0.016;
+    const px=cx+Math.cos(p.angle)*p.orbit;
+    const py=cy+Math.sin(p.angle)*p.orbit;
+
+    if(p.rings){
+      ctx.save();
+      ctx.translate(px,py);
+      ctx.scale(1,0.35);
+      ctx.beginPath(); ctx.arc(0,0,p.r+14,0,Math.PI*2);
+      ctx.strokeStyle='rgba(200,185,120,0.55)'; ctx.lineWidth=6; ctx.stroke();
+      ctx.beginPath(); ctx.arc(0,0,p.r+8,0,Math.PI*2);
+      ctx.strokeStyle='rgba(220,200,140,0.35)'; ctx.lineWidth=3; ctx.stroke();
+      ctx.restore();
+    }
+
+    const glow=ctx.createRadialGradient(px,py,0,px,py,p.r*2.5);
+    glow.addColorStop(0,p.color+'99'); glow.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(px,py,p.r*2.5,0,Math.PI*2); ctx.fill();
+
+    const pg=ctx.createRadialGradient(px-p.r*0.3,py-p.r*0.3,p.r*0.1,px,py,p.r);
+    pg.addColorStop(0,'#fff');
+    pg.addColorStop(0.2,p.color);
+    pg.addColorStop(1,shadeColor(p.color,-50));
+    ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(px,py,p.r,0,Math.PI*2); ctx.fill();
+
+    if(p.bands){
+      ctx.save(); ctx.beginPath(); ctx.arc(px,py,p.r,0,Math.PI*2); ctx.clip();
+      for(let b=-3;b<=3;b++){
+        ctx.fillStyle=b%2===0?'rgba(180,120,60,0.25)':'rgba(220,180,100,0.18)';
+        ctx.fillRect(px-p.r, py+b*(p.r/3.5)-2, p.r*2, p.r/3.5);
+      }
+      ctx.restore();
+    }
+
+    if(p.moon){
+      MOON.angle+=MOON.speed*0.016;
+      const mx=px+Math.cos(MOON.angle)*MOON.orbit;
+      const my=py+Math.sin(MOON.angle)*MOON.orbit;
+      ctx.beginPath(); ctx.arc(mx,my,MOON.r,0,Math.PI*2);
+      ctx.fillStyle='#ccc'; ctx.fill();
+    }
+  }
+
+  ctx.font='10px sans-serif'; ctx.fillStyle='rgba(255,255,200,0.4)'; ctx.textAlign='center';
+  ctx.fillText('☀ You are here', cx, cy+58);
+
+  ctx.restore();
+}
+
+function shadeColor(hex, pct){
+  let n=parseInt(hex.slice(1),16),r=(n>>16)+pct,g=((n>>8)&0xff)+pct,b=(n&0xff)+pct;
+  r=Math.max(0,Math.min(255,r)); g=Math.max(0,Math.min(255,g)); b=Math.max(0,Math.min(255,b));
+  return `rgb(${r},${g},${b})`;
+}
+
+function loop(){
+  if(mode==='galaxy') drawGalaxy();
+  else drawSolar();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
